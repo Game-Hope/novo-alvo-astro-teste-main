@@ -3,9 +3,12 @@ import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
 import sitemap, { ChangeFreqEnum } from '@astrojs/sitemap';
 
+import cloudflare from '@astrojs/cloudflare';
+
 export default defineConfig({
   site: 'https://portalnovoalvo.com.br',
   output: 'static',
+
   integrations: [
     react(),
     sitemap({
@@ -25,10 +28,13 @@ export default defineConfig({
       },
     }),
   ],
+
   vite: {
     resolve: {
       tsconfigPaths: false,
     },
     plugins: [tailwindcss()],
   },
+
+  adapter: cloudflare(),
 });
