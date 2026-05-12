@@ -9,3 +9,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 dev-server.log
+
+.dev.vars*
+!.dev.vars.example
+!.env.example
