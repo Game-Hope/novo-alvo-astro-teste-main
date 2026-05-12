@@ -5,64 +5,120 @@ import { uploadImageToR2 } from './upload-image-to-r2.mjs';
 import { isR2Configured } from './r2-config.mjs';
 
 /**
- * Enriquece uma pauta com imagens, seguindo a estratégia de 3 camadas:
- * 1. Fetch (método existente)
- * 2. Crawl4AI + Groq (fallback)
- * 3. Upload para R2 (salva no bucket próprio)
+ * Função para salvar no D1 via API (Necessário para GitHub Actions)
+ * ou via Binding (para Cloudflare Pages)
  */
+async function saveToD1(article) {
+  const { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, EDITORIAL_DB_ID } = process.env;
+
+  // Se estivermos no Cloudflare Pages, usamos o binding direto
+  if (globalThis.D1 || (process.env.EDITORIAL_DB && !CLOUDFLARE_API_TOKEN)) {
+    try {
+      const db = process.env.EDITORIAL_DB; 
+      await db.prepare('INSERT INTO articles (id, title, slug, description, body_html, cover_url, category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(article.id, article.title, article.slug, article.description, article.body_html, article.cover_url, article.category, new Date().toISOString())
+        .run();
+      console.log(`[D1] Artigo salvo via Binding: ${article.title}`);
+      return true;
+    } catch (e) {
+      console.error(`[D1-BINDING ERROR] ${e.message}`);
+    }
+  }
+
+  // Se estivermos no GitHub Actions, usamos a API REST do Cloudflare
+  if (CLOUDFLARE_API_TOKEN && CLOUDFLARE_ACCOUNT_ID && EDITORIAL_DB_ID) {
+    try {
+      const query = `INSERT INTO articles (id, title, slug, description, body_html, cover_url, category, created_at) VALUES (
+        "${article.id}", "${article.title.replace(/"/g, '\"')}", "${article.slug}", 
+        "${article.description.replace(/"/g, '\"')}", "${article.body_html.replace(/"/g, '\"')}", 
+        "${article.cover_url}", "${article.category}", "${new Date().toISOString()}")`;
+
+      const res = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/endpoint/${EDITORIAL_DB_ID}/sql`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ query })
+        }
+      );
+
+      if (res.ok) {
+        console.log(`[D1-API] Artigo salvo via API: ${article.title}`);
+        return true;
+      } else {
+        const err = await res.text();
+        console.error(`[D1-API ERROR] ${err}`);
+      }
+    } catch (e) {
+      console.error(`[D1-API EXCEPTION] ${e.message}`);
+    }
+  } else {
+    console.error("[D1] ERRO: Nem Binding nem API Token configurados. Não é possível salvar no banco.");
+  }
+  return false;
+}
+
 export const enrichPitchImages = async (pitch) => {
-  // --- CAMADA 1: Fetch existente (já funciona para 70-80% das fontes) ---
   let candidateUrl = null;
   try {
     const images = await fetchArticleImages(pitch.sources ?? []);
     candidateUrl = images[0]?.url ?? null;
-    if (candidateUrl) {
-      console.log(`[IMAGE] Camada 1 (Fetch) encontrou: ${candidateUrl}`);
-    }
-  } catch (err) {
-    console.warn('[IMAGE] Falha na Camada 1 (Fetch):', err.message);
-  }
+  } catch (err) { console.warn('[IMAGE] Falha Camada 1:', err.message); }
 
-  // --- CAMADA 2: Crawl4AI + Groq (fallback quando Fetch falha) ---
   if (!candidateUrl && pitch.sources?.length > 0) {
     try {
-      console.log('[IMAGE] Iniciando Camada 2 (Crawl4AI/Groq) para:', pitch.sources[0].url);
       candidateUrl = await fetchImageWithCrawl4AI(pitch.sources[0].url);
-      if (candidateUrl) {
-        console.log(`[IMAGE] Camada 2 (Crawl4AI/Groq) encontrou: ${candidateUrl}`);
-      }
-    } catch (err) {
-      console.warn('[IMAGE] Falha na Camada 2 (Crawl4AI/Groq):', err.message);
-    }
+    } catch (err) { console.warn('[IMAGE] Falha Camada 2:', err.message); }
   }
 
-  // --- CAMADA 3: Upload para R2 (se houver URL válida e R2 configurado) ---
   let cover_url = null;
   if (candidateUrl && isR2Configured()) {
     try {
-      console.log('[IMAGE] Iniciando Camada 3 (Upload R2) para:', candidateUrl);
       cover_url = await uploadImageToR2(candidateUrl, pitch.clusterKey ?? pitch.id);
-      if (cover_url) {
-        console.log(`[IMAGE] Camada 3 (R2) concluída. URL final: ${cover_url}`);
-      }
     } catch (err) {
-      console.error('[IMAGE] Falha na Camada 3 (Upload R2):', err.message);
-      // Mantemos candidateUrl como fallback caso o R2 falhe
+      console.error(`[IMAGE] Falha Camada 3: ${err.message}`);
       cover_url = candidateUrl;
     }
   } else if (candidateUrl) {
-    // R2 não configurado — mantemos a URL original (mas avisamos)
-    console.warn('[IMAGE] R2 não configurado. Mantendo URL original (risco de 404):', candidateUrl);
     cover_url = candidateUrl;
   }
 
-  // --- Resultado final ---
-  return {
-    ...pitch,
-    cover_url, // URL final que será salva no banco (R2 ou original)
-    imageCandidates: [
-      ...(candidateUrl ? [{ url: candidateUrl, source: 'fetch' }] : []),
-      ...(cover_url && cover_url !== candidateUrl ? [{ url: cover_url, source: 'r2' }] : [])
-    ].filter(Boolean) // Remove null/undefined
-  };
+  return { ...pitch, cover_url };
 };
+
+// --- MAIN EXECUTION (SIMPLIFICADO PARA TESTE) ---
+async function runIngest() {
+  console.log("🚀 Iniciando Ingestão NEXA...");
+  
+  // Aqui ficaria a lógica de buscar RSS e chamar o Gemini. 
+  // Para testarmos o D1 e R2 agora, vamos simular um artigo:
+  const mockArticle = {
+    id: `test-${Date.now()}`,
+    title: "Teste de Soberania Digital NEXA",
+    slug: "teste-soberania-digital-nexa",
+    description: "Validando o pipeline de imagens e banco de dados D1",
+    body_html: "<p>Este é um artigo de teste para validar o sistema.</p>",
+    category: "Tecnologia",
+    sources: ["https://www.google.com"],
+    clusterKey: "teste-nexa"
+  };
+
+  console.log("[INGEST] Processando artigo de teste...");
+  const enriched = await enrichPitchImages(mockArticle);
+  
+  const success = await saveToD1({
+    ...enriched,
+    cover_url: enriched.cover_url
+  });
+
+  if (success) {
+    console.log("✅ SUCESSO TOTAL: Artigo e Imagem salvos no D1/R2!");
+  } else {
+    console.error("❌ FALHA: O artigo não pôde ser salvo no banco de dados.");
+  }
+}
+
+runIngest().catch(console.error);
