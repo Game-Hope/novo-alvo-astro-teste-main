@@ -1,91 +1,76 @@
 // scripts/fetch-image-crawl4ai.mjs
-import Crawl4AI from '@crawl4ai/client';
 
 const GROQ_KEY = process.env.GROQ_API_KEY ?? '';
 
 /**
- * Camada 2: Extrai a imagem principal usando Crawl4AI (Chrome headless) + Groq (LLM).
- * Só é chamada quando a Camada 1 (Fetch) falha.
+ * Camada 2: Extrai a imagem principal usando Fetch simples + IA do Groq.
+ * Sem dependências externas de navegadores, usando apenas a API do Groq.
  */
 export const fetchImageWithCrawl4AI = async (articleUrl) => {
   if (!GROQ_KEY) {
-    console.warn('[CRAWL4AI] GROQ_API_KEY não configurada. Pulando Camada 2.');
+    console.warn('[NEXA-IA] GROQ_API_KEY não configurada. Pulando fallback de IA.');
     return null;
   }
 
   try {
-    console.log(`[CRAWL4AI] Iniciando análise para: ${articleUrl}`);
+    console.log(`[NEXA-IA] Analisando HTML da fonte: ${articleUrl}`);
 
-    const crawler = new Crawl4AI({
-      llm: {
-        provider: 'groq/deepseek-r1-distill-llama-70b',
-        api_key: GROQ_KEY,
-      },
-      // Foco em containers de conteúdo para reduzir tokens e evitar lixo (ads/menus)
-      css_selector: 'article, main, .article-body, .content, #content, .post',
-      headless: true,
-      // Timeout adequado para sites pesados
-      page_renderer: {
-        wait_until: 'networkidle',
-        timeout: 30000
+    // 1. Faz o fetch do HTML bruto da página
+    const response = await fetch(articleUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari으로 537.36'
       }
     });
 
-    const result = await crawler.arun({
-      url: articleUrl,
-      extraction_strategy: {
-        type: 'llm',
-        instruction: 
-          'EXTRAÍMOS APENAS A URL DA IMAGEM PRINCIPAL DA MATÉRIA JORNALÍSTICA. ' +
-          'IGNORE LOGOS, ÍCONES, AVATARS, BANNERS DE PUBLICIDADE, IMAGENS DE REDES SOCIAIS E ELEMENTOS DECORATIVOS. ' +
-          'SE NÃO HOUVER IMAGEM PRINCIPAL CLARA, RETORNE NULL. ' +
-          'RESPOSTA DEVE SER JSON PURA: { "image_url": "https://example.com/image.jpg" }',
-        schema: { image_url: 'string' },
+    if (!response.ok) throw new Error(`Erro ao acessar site: ${response.status}`);
+    const html = await response.text();
+
+    // 2. Limpa o HTML para não estourar o limite de tokens da IA
+    // Removemos scripts e estilos para focar no conteúdo
+    const cleanHtml = html
+      .replace(/<script.*?>.*?<\/script>/gs, '')
+      .replace(/<style.*?>.*?<\/style>/gs, '')
+      .substring(0, 30000); // Pega os primeiros 30k caracteres (suficiente para achar a imagem)
+
+    // 3. Envia para o Groq analisar e extrair a URL da imagem
+    const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json'
       },
+      body: JSON.stringify({
+        model: 'deepseek-r1-distill-llama-70b',
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é um extrator de dados especializado em HTML. Sua única tarefa é encontrar a URL da imagem principal (capa) de um artigo de notícias.'
+          },
+          {
+            role: 'user',
+            content: `Analise este HTML e retorne APENAS um JSON com a URL da imagem principal. Ignore logos e ícones. \n\nHTML: ${cleanHtml}`
+          }
+        ],
+        response_format: { type: "json_object" }
+      })
     });
 
-    const extracted = result.extracted_content ?? 'null';
-    let data = null;
-    try {
-      data = JSON.parse(extracted);
-    } catch (e) {
-      console.warn('[CRAWL4AI] Resposta não é JSON válido:', extracted);
-      return null;
-    }
+    const result = await groqResponse.json();
+    const content = result.choices?.[0]?.message?.content;
+    
+    if (!content) return null;
 
-    const url = data?.image_url ?? null;
-    if (!url) {
-      console.log('[CRAWL4AI] Nenhuma imagem principal encontrada.');
-      return null;
-    }
+    const data = JSON.parse(content);
+    const url = data.image_url || data.url || null;
 
-    // Validação final: garantir que é uma URL de imagem válida
-    if (isValidImageUrl(url)) {
-      console.log(`[CRAWL4AI] Imagem válida encontrada: ${url}`);
+    if (url && url.startsWith('http')) {
+      console.log(`[NEXA-IA] Imagem encontrada via Groq: ${url}`);
       return url;
     }
 
-    console.warn('[CRAWL4AI] URL encontrada não parece ser uma imagem:', url);
     return null;
   } catch (err) {
-    console.error('[CRAWL4AI] Erro inesperado:', err.message);
+    console.error(`[NEXA-IA] Erro no fallback de IA: ${err.message}`);
     return null;
   }
 };
-
-/**
- * Valida se uma URL parece ser de imagem (extensão ou content-type comum)
- */
-function isValidImageUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  
-  // Verifica extensões comuns de imagem
-  const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg'];
-  const hasImageExtension = imageExtensions.some(ext => 
-    url.toLowerCase().endsWith(ext)
-  );
-  
-  // Se não tiver extensão, ainda pode ser válida (alguns CDNs sem extensão)
-  // Mas para nosso caso, exigimos extensão para evitar falsos positivos
-  return hasImageExtension;
-}
