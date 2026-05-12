@@ -27,7 +27,6 @@
     "tailwindcss": "latest",
     "typescript": "latest",
     "@aws-sdk/client-s3": "^3.500.0",
-    "@crawl4ai/client": "^0.4.0"
   },
   "overrides": {
     "vite": "^7"
