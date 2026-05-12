@@ -40,20 +40,27 @@ export async function uploadImageToR2(imageUrl, key) {
     const buffer = await response.arrayBuffer(); // retorna Uint8Array
 
     // 2️⃣ Faz o upload para o R2
-    console.log(`[R2] Fazendo upload para bucket "${process.env.R2_BUCKET_NAME}" com chave "${key}"`);
+    console.log(
+      `[R2] Fazendo upload para bucket "${process.env.R2_BUCKET_NAME}" com chave "${key}"`
+    );
     await s3Client.send(
       new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME,
         Key: key,
         Body: Buffer.from(buffer),
-        ContentType: response.headers.get("content-type") ?? "application/octet-stream",
-        // Opcional: definir ACL pública se o bucket não for público por padrão
-        // ACL: "public-read",
+        ContentType:
+          response.headers.get("content-type") ?? "application/octet-stream",
+        // Se o bucket não estiver configurado como público por padrão,
+        // você pode adicionar: ACL: "public-read",
       })
     );
 
-    // 3️⃣ Monta a URL pública (assumindo que o bucket está configurado com acesso público ou que você usa um domínio customizado)
-    const publicUrl = `${process.env.R2_PUBLIC_URL.replace(/\/+$/, "")}/${key}`;
+    // 3️⃣ Monta a URL pública (assumindo que o bucket está configurado com acesso público
+    // ou que você usa um domínio customizado apontando para o bucket)
+    const publicUrl = `${process.env.R2_PUBLIC_URL.replace(
+      /\/+$/,
+      ""
+    )}/${key}`;
     console.log(`[R2] Upload concluído. URL pública: ${publicUrl}`);
 
     return publicUrl;
