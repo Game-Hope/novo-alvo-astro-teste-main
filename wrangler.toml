@@ -1,5 +1,0 @@
-name = "novo-alvo-astro-teste"
-main = "src/index.ts"
-
-[vars]
-EDITORIAL_DB = "editorial_db"
