@@ -124,7 +124,6 @@ async function runIngest() {
   category: "Tecnologia", // pode ser qualquer categoria que você queira testar
   sources: [
     "https://news.google.com/rss/search?q=tecnologia&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-    "https://novo-alvo-astro-teste.pages.dev/feed.xml"
   ],
   clusterKey: "teste-nexa"
 };
