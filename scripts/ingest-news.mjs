@@ -4,85 +4,87 @@ import { fetchImageWithCrawl4AI } from './fetch-image-crawl4ai.mjs';
 import { uploadImageToR2 } from './upload-image-to-r2.mjs';
 import { isR2Configured } from './r2-config.mjs';
 
-/**
- * Função para salvar no D1 via API (Necessário para GitHub Actions)
- * ou via Binding (Para Cloudflare Pages)
- */
+async function checkSecrets() {
+  const required = {
+    'CLOUDFLARE_API_TOKEN': process.env.CLOUDFLARE_API_TOKEN,
+    'CLOUDFLARE_ACCOUNT_ID': process.env.CLOUDFLARE_ACCOUNT_ID,
+    'EDITORIAL_DB_ID': process.env.EDITORIAL_DB_ID,
+    'GROQ_API_KEY': process.env.GROQ_API_KEY,
+    'R2_ACCOUNT_ID': process.env.R2_ACCOUNT_ID,
+    'R2_ACCESS_KEY': process.env.R2_ACCESS_KEY,
+    'R2_SECRET_KEY': process.env.R2_SECRET_KEY,
+    'R2_BUCKET_NAME': process.env.R2_BUCKET_NAME,
+    'R2_PUBLIC_URL': process.env.R2_PUBLIC_URL
+  };
+
+  const missing = Object.entries(required).filter(([_, v]) => !v).map(([k]) => k);
+  if (missing.length > 0) {
+    console.error(`\n❌ ERRO: Faltam as seguintes chaves nos Secrets do GitHub:\n👉 ${missing.join('\n👉 ')}`);
+    process.exit(1);
+  }
+}
+
 async function saveToD1(article) {
   const { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, EDITORIAL_DB_ID } = process.env;
 
-  // 1. Tentativa via Binding (Se estiver rodando dentro do Cloudflare Pages)
-  if (globalThis.D1 || (process.env.EDITORIAL_DB && !CLOUDFLARE_API_TOKEN)) {
-    try {
-      const db = process.env.EDITORIAL_DB; 
-      await db.prepare('INSERT INTO articles (id, title, slug, description, body_html, cover_url, category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(article.id, article.title, article.slug, article.description, article.body_html, article.cover_url, article.category, new Date().toISOString())
-        .run();
-      console.log(`[D1] ✅ Artigo salvo via Binding: ${article.title}`);
-      return true;
-    } catch (e) {
-      console.error(`[D1-BINDING ERROR] ${e.message}`);
-    }
-  }
+  try {
+    const clean = (str) => (str || "").toString().replace(/'/g, "''");
 
-  // 2. Tentativa via API (Para GitHub Actions)
-  if (CLOUDFLARE_API_TOKEN && CLOUDFLARE_ACCOUNT_ID && EDITORIAL_DB_ID) {
-    try {
-      // Sanitização rigorosa para evitar erros de SQL (troca ' por '')
-      const clean = (str) => (str || "").toString().replace(/'/g, "''");
+    const query = `INSERT INTO articles (id, title, slug, description, body_html, cover_url, category, created_at) VALUES (
+      '${clean(article.id)}', 
+      '${clean(article.title)}', 
+      '${clean(article.slug)}', 
+      '${clean(article.description)}', 
+      '${clean(article.body_html)}', 
+      '${clean(article.cover_url)}', 
+      '${clean(article.category)}', 
+      '${new Date().toISOString()}')`;
 
-      const query = `INSERT INTO articles (id, title, slug, description, body_html, cover_url, category, created_at) VALUES (
-        '${clean(article.id)}', 
-        '${clean(article.title)}', 
-        '${clean(article.slug)}', 
-        '${clean(article.description)}', 
-        '${clean(article.body_html)}', 
-        '${clean(article.cover_url)}', 
-        '${clean(article.category)}', 
-        '${new Date().toISOString()}')`;
-
-      console.log(`[D1-API] Enviando dados para o banco Cloudflare...`);
-      const res = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/endpoint/${EDITORIAL_DB_ID}/sql`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ query })
-        }
-      );
-
-      const responseData = await res.json();
-
-      if (res.ok) {
-        console.log(`[D1] ✅ SUCESSO TOTAL: Artigo salvo via API: ${article.title}`);
-        return true;
-      } else {
-        console.error(`[D1-API ERROR] O Cloudflare recusou o salvamento:`, JSON.stringify(responseData));
+    console.log(`[D1-API] Enviando dados para o banco Cloudflare...`);
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/endpoint/${EDITORIAL_DB_ID}/sql`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query })
       }
-    } catch (e) {
-      console.error(`[D1-EXCEPTION] Erro crítico na requisição: ${e.message}`);
+    );
+
+    const data = await res.json();
+
+    if (res.ok) {
+      console.log(`[D1] ✅ SUCESSO TOTAL: Artigo salvo via API: ${article.title}`);
+      return true;
+    } else {
+      console.error(`[D1-API ERROR] O Cloudflare recusou o salvamento:`, JSON.stringify(data));
+      if (res.status === 403 || res.status === 401) {
+        console.error("👉 DICA: Seu CLOUDFLARE_API_TOKEN está incorreto ou não tem permissão de 'Edit' para o D1.");
+      }
+      return false;
     }
-  } else {
-    console.error("[D1] ❌ ERRO: Faltam credenciais de API (CLOUDFLARE_API_TOKEN, ACCOUNT_ID ou DB_ID).");
+  } catch (e) {
+    console.error(`[D1-EXCEPTION] Erro crítico: ${e.message}`);
+    return false;
   }
-  return false;
 }
 
 export const enrichPitchImages = async (pitch) => {
   let candidateUrl = null;
+  
+  // GARANTE QUE SOURCES SEJA SEMPRE UM ARRAY DE STRINGS
+  const sourcesList = (pitch.sources || []).map(s => typeof s === 'object' ? s.url : s).filter(Boolean);
+
   try {
-    const images = await fetchArticleImages(pitch.sources ?? []);
+    const images = await fetchArticleImages(sourcesList);
     candidateUrl = images[0]?.url ?? null;
   } catch (err) { console.warn('[IMAGE] Falha Camada 1:', err.message); }
 
-  if (!candidateUrl && pitch.sources?.length > 0) {
+  if (!candidateUrl && sourcesList.length > 0) {
     try {
-      // Garante que estamos pegando a URL da fonte corretamente
-      const firstSourceUrl = typeof pitch.sources[0] === 'object' ? pitch.sources[0].url : pitch.sources[0];
-      candidateUrl = await fetchImageWithCrawl4AI(firstSourceUrl);
+      candidateUrl = await fetchImageWithCrawl4AI(sourcesList[0]);
     } catch (err) { console.warn('[IMAGE] Falha Camada 2:', err.message); }
   }
 
@@ -91,7 +93,7 @@ export const enrichPitchImages = async (pitch) => {
     try {
       cover_url = await uploadImageToR2(candidateUrl, pitch.clusterKey ?? pitch.id);
     } catch (err) {
-      console.error(`[IMAGE] Falha Camada 3 (R2): ${err.message}`);
+      console.error(`[IMAGE] Falha Camada 3: ${err.message}`);
       cover_url = candidateUrl;
     }
   } else if (candidateUrl) {
@@ -105,7 +107,7 @@ export const enrichPitchImages = async (pitch) => {
 async function runIngest() {
   console.log("🚀 Iniciando Ingestão de Teste NEXA...");
   
-  // Verificação de Segredos
+  // VERIFICAÇÃO DE SEGREDOS
   const required = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'EDITORIAL_DB_ID', 'GROQ_API_KEY'];
   const missing = required.filter(key => !process.env[key]);
   if (missing.length > 0) {
@@ -120,7 +122,7 @@ async function runIngest() {
     description: "Validando o pipeline de imagens e banco de dados D1 via API",
     body_html: "<p>Este é um artigo de teste para validar o sistema de salvamento remoto.</p>",
     category: "Tecnologia",
-    sources: [{ url: "https://www.google.com" }], 
+    sources: ["https://www.google.com"], // ← CORRIGIDO: ARRAY DE STRINGS (NÃO OBJETO)
     clusterKey: "teste-nexa"
   };
 
