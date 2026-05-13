@@ -116,15 +116,19 @@ async function runIngest() {
   }
 
   const mockArticle = {
-    id: `test-${Date.now()}`,
-    title: "Teste de Soberania Digital NEXA",
-    slug: "teste-soberania-digital-nexa",
-    description: "Validando o pipeline de imagens e banco de dados D1 via API",
-    body_html: "<p>Este é um artigo de teste para validar o sistema de salvamento remoto.</p>",
-    category: "Tecnologia",
-    sources: ["https://www.google.com"], // ← CORRIGIDO: ARRAY DE STRINGS (NÃO OBJETO)
-    clusterKey: "teste-nexa"
-  };
+  id: `test-${Date.now()}`,
+  title: "Teste de Ingestão com o feed do site",
+  slug: "teste-ingest-feed-xml",
+  description: "Teste usando o feed XML gerado pelo próprio site para validar o pipeline de imagem.",
+  body_html: "<p>Este é um artigo de teste para validar o sistema de ingestão com feed próprio.</p>",
+  category: "Tecnologia", // pode ser qualquer categoria que você queira testar
+  sources: [
+    "https://news.google.com/rss/search?q=tecnologia&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    "https://novo-alvo-astro-teste.pages.dev/feed.xml"
+  ],
+  clusterKey: "teste-nexa"
+};
+
 
   console.log("[INGEST] Processando artigo de teste...");
   const enriched = await enrichPitchImages(mockArticle);
