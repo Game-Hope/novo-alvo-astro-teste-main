@@ -3,14 +3,15 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '*/45 * * * *' # Roda a cada 45 min
-  workflow_dispatch: # Permite rodar manualmente
+    - cron: '*/45 * * * *'
+  workflow_dispatch:
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
+ la l'environnement
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -19,17 +20,23 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install # Mudamos de 'npm ci' para 'npm install' para evitar erro de lock file
+        run: npm install
 
       - name: Run ingest script
         env:
+          # Chaves de IA
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # Chaves do R2 (Imagens)
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
           R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          # Chaves do D1 e Admin
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }} # Usa o mesmo ID da conta
+          EDITORIAL_DB_ID: ${{ secrets.EDITORIAL_DB_ID }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: npm run ingest:news
 
