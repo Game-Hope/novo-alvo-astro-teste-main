@@ -35,6 +35,21 @@ jobs:
           EDITORIAL_DB_ID: ${{ secrets.EDITORIAL_DB_ID }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: npm run ingest:news
+      - name: 🔬 TESTE RELÂMPAGO DO TOKEN D1 (REMOVE DEPOIS)
+        run: |
+          echo "🔍 Testando token de API com o D1..."
+          RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/d1/endpoint/${{ secrets.EDITORIAL_DB_ID }}/sql" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"SELECT 1;"}' || echo "curl failed")
+          echo "📡 Resposta completa do Cloudflare:"
+          echo "$RESPONSE"
+          if echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✅ TOKEN VÁLIDO! O Cloudflare aceitou sua chave."
+          else
+            echo "❌ TOKEN INVÁLIDO. Copie a resposta acima e me envie — eu digo exatamente o que corrigir."
+            exit 1
+          fi
 
       - name: Commit and Push changes
         run: |
