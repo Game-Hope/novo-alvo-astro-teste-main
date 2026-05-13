@@ -3,15 +3,14 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '*/45 * * * *'
-  workflow_dispatch:
+    - cron: '*/45 * * * *' # Roda a cada 45 min
+  workflow_dispatch: # Permite rodar manualmente
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
- la l'environnement
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -35,7 +34,7 @@ jobs:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
           # Chaves do D1 e Admin
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }} # Usa o mesmo ID da conta
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           EDITORIAL_DB_ID: ${{ secrets.EDITORIAL_DB_ID }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: npm run ingest:news
