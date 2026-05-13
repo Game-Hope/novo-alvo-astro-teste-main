@@ -1,10 +1,9 @@
 // scripts/fetch-image-crawl4ai.mjs
-
 const GROQ_KEY = process.env.GROQ_API_KEY ?? '';
 
 /**
- * Camada 2: Extrai a imagem principal usando Fetch simples + IA do Groq.
- * Sem dependências externas de navegadores, usando apenas a API do Groq.
+ * Camada 2: Extrai a imagem principal usando Fetch + IA do Groq (com limpeza de caracteres).
+ * Remove todos os caracteres não-ASCII para evitar erros de ByteString.
  */
 export const fetchImageWithCrawl4AI = async (articleUrl) => {
   if (!GROQ_KEY) {
@@ -15,24 +14,24 @@ export const fetchImageWithCrawl4AI = async (articleUrl) => {
   try {
     console.log(`[NEXA-IA] Analisando HTML da fonte: ${articleUrl}`);
 
-    // 1. Faz o fetch do HTML bruto da página
+    // Busca o HTML com User-Agent comum para evitar bloqueios
     const response = await fetch(articleUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari으로 537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
     });
 
     if (!response.ok) throw new Error(`Erro ao acessar site: ${response.status}`);
-    const html = await response.text();
+    let html = await response.text();
 
-    // 2. Limpa o HTML para não estourar o limite de tokens da IA
-    // Removemos scripts e estilos para focar no conteúdo
-    const cleanHtml = html
-      .replace(/<script.*?>.*?<\/script>/gs, '')
-      .replace(/<style.*?>.*?<\/style>/gs, '')
-      .substring(0, 30000); // Pega os primeiros 30k caracteres (suficiente para achar a imagem)
+    // 🔑 CORREÇÃO CRÍTICA: Remove TUDO o que pode causar ByteString
+    html = html
+      .replace(/[^\x00-\x7F]/g, "")    // Remove todos os caracteres não-ASCII (acentos, emojis, etc.)
+      .replace(/<script.*?>.*?<\/script>/gs, '') // Remove scripts
+      .replace(/<style.*?>.*?<\/style>/gs, '')   // Remove estilos
+      .substring(0, 20000); // Limita tamanho para evitar estouro de token
 
-    // 3. Envia para o Groq analisar e extrair a URL da imagem
+    // Envia para o Groq analisar
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -44,11 +43,11 @@ export const fetchImageWithCrawl4AI = async (articleUrl) => {
         messages: [
           {
             role: 'system',
-            content: 'Você é um extrator de dados especializado em HTML. Sua única tarefa é encontrar a URL da imagem principal (capa) de um artigo de notícias.'
+            content: 'Você é um extrator de dados especializado em HTML. Sua única tarefa é encontrar a URL da imagem principal (capa) de um artigo de notícias. Retorne APENAS um JSON: {"image_url": "URL_AQUI"}'
           },
           {
             role: 'user',
-            content: `Analise este HTML e retorne APENAS um JSON com a URL da imagem principal. Ignore logos e ícones. \n\nHTML: ${cleanHtml}`
+            content: `HTML para análise:\n\n${html}`
           }
         ],
         response_format: { type: "json_object" }
@@ -63,7 +62,7 @@ export const fetchImageWithCrawl4AI = async (articleUrl) => {
     const data = JSON.parse(content);
     const url = data.image_url || data.url || null;
 
-    if (url && url.startsWith('http')) {
+    if (url && typeof url === 'string' && url.startsWith('http')) {
       console.log(`[NEXA-IA] Imagem encontrada via Groq: ${url}`);
       return url;
     }
